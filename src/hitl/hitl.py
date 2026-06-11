@@ -65,32 +65,42 @@ class ConfidenceRouter:
         Returns:
             RoutingDecision with routing action and metadata
         """
-        # TODO 12: Implement routing logic
-        #
-        # 1. Check if action_type is in HIGH_RISK_ACTIONS
-        #    -> If yes: always escalate (action="escalate", priority="high",
-        #       requires_human=True, reason="High-risk action: {action_type}")
-        #
-        # 2. Check confidence thresholds:
-        #    - confidence >= 0.9:
-        #      action="auto_send", priority="low",
-        #      requires_human=False, reason="High confidence"
-        #
-        #    - 0.7 <= confidence < 0.9:
-        #      action="queue_review", priority="normal",
-        #      requires_human=True, reason="Medium confidence — needs review"
-        #
-        #    - confidence < 0.7:
-        #      action="escalate", priority="high",
-        #      requires_human=True, reason="Low confidence — escalating"
+        # 1. High-risk actions always escalate, regardless of confidence
+        if action_type in HIGH_RISK_ACTIONS:
+            return RoutingDecision(
+                action="escalate",
+                confidence=confidence,
+                reason=f"High-risk action: {action_type}",
+                priority="high",
+                requires_human=True,
+            )
+
+        # 2. Confidence-based routing
+        if confidence >= self.HIGH_THRESHOLD:
+            return RoutingDecision(
+                action="auto_send",
+                confidence=confidence,
+                reason="High confidence",
+                priority="low",
+                requires_human=False,
+            )
+
+        if confidence >= self.MEDIUM_THRESHOLD:
+            return RoutingDecision(
+                action="queue_review",
+                confidence=confidence,
+                reason="Medium confidence — needs review",
+                priority="normal",
+                requires_human=True,
+            )
 
         return RoutingDecision(
-            action="auto_send",
+            action="escalate",
             confidence=confidence,
-            reason="TODO: implement routing logic",
-            priority="low",
-            requires_human=False,
-        )  # TODO: Replace with implementation
+            reason="Low confidence — escalating",
+            priority="high",
+            requires_human=True,
+        )
 
 
 # ============================================================
@@ -109,27 +119,63 @@ class ConfidenceRouter:
 hitl_decision_points = [
     {
         "id": 1,
-        "name": "TODO: Name this decision point",
-        "trigger": "TODO: When does this trigger?",
-        "hitl_model": "TODO: human-in-the-loop / human-on-the-loop / human-as-tiebreaker",
-        "context_needed": "TODO: What does the reviewer need to see?",
-        "example": "TODO: Give a concrete example scenario",
+        "name": "High-value / high-risk transaction approval",
+        "trigger": (
+            "Action is in HIGH_RISK_ACTIONS (transfer_money, close_account, "
+            "change_password, ...) OR a money transfer exceeds a threshold "
+            "(e.g. > 50,000,000 VND) or goes to a new/unverified beneficiary."
+        ),
+        "hitl_model": "human-in-the-loop",  # block & wait for human approval BEFORE executing
+        "context_needed": (
+            "Customer identity & verification status, account balance, the exact "
+            "action and amount, destination account, fraud-risk score, and recent "
+            "transaction history for anomaly comparison."
+        ),
+        "example": (
+            "Customer asks to transfer 200,000,000 VND to an account first seen "
+            "today. The agent pauses and routes to a bank officer who must "
+            "approve or reject before any money moves."
+        ),
     },
     {
         "id": 2,
-        "name": "TODO: Name this decision point",
-        "trigger": "TODO: When does this trigger?",
-        "hitl_model": "TODO: human-in-the-loop / human-on-the-loop / human-as-tiebreaker",
-        "context_needed": "TODO: What does the reviewer need to see?",
-        "example": "TODO: Give a concrete example scenario",
+        "name": "Low-confidence / ambiguous answer review",
+        "trigger": (
+            "ConfidenceRouter returns confidence < 0.7 (escalate) or the LLM-as-"
+            "Judge / guardrails flag the response as uncertain, possibly "
+            "hallucinated, or policy-sensitive (fees, legal, complaints)."
+        ),
+        "hitl_model": "human-as-tiebreaker",  # human decides when the system is unsure
+        "context_needed": (
+            "The user's question, the agent's draft answer, the confidence score, "
+            "the judge's verdict/reason, and the source/policy documents the answer "
+            "was based on."
+        ),
+        "example": (
+            "A customer asks about early-withdrawal penalties on a specific savings "
+            "product the agent has weak grounding for (confidence 0.55). The draft "
+            "is queued for a banking specialist to confirm or correct before sending."
+        ),
     },
     {
         "id": 3,
-        "name": "TODO: Name this decision point",
-        "trigger": "TODO: When does this trigger?",
-        "hitl_model": "TODO: human-in-the-loop / human-on-the-loop / human-as-tiebreaker",
-        "context_needed": "TODO: What does the reviewer need to see?",
-        "example": "TODO: Give a concrete example scenario",
+        "name": "Guardrail / safety incident & abuse monitoring",
+        "trigger": (
+            "Input or output guardrails block content, a possible PII/secret leak "
+            "is detected and redacted, or repeated prompt-injection / jailbreak "
+            "attempts come from the same session."
+        ),
+        "hitl_model": "human-on-the-loop",  # agent keeps serving; humans monitor & intervene async
+        "context_needed": (
+            "The blocked/redacted message, which guardrail fired and why, the "
+            "session/user id, and the frequency of recent blocked attempts to spot "
+            "a coordinated attack."
+        ),
+        "example": (
+            "A session triggers the injection filter 8 times in 2 minutes trying to "
+            "extract the system prompt. A security analyst monitoring the dashboard "
+            "reviews the log and decides to rate-limit or ban the session."
+        ),
     },
 ]
 
